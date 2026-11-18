@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin · Faction Activity Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=REM:wght@400;600;700&display=swap" rel="stylesheet">
+<style>html,body{background:#000;color:#fff;margin:0;font-family:"REM",system-ui,sans-serif}</style></head>
+<body data-mode="admin"><div class="wrap"><div id="app" style="padding:16px">Loading…</div></div><div id="toast"></div>
+<script src="config.js"></script>
+<script>
+(()=>{
+const ADMIN=document.body.dataset.mode==='admin';
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>'x'+Math.random().toString(36).slice(2,9);
+const arr=o=>Object.entries(o||{}).map(([id,v])=>({id,...v}));
+const BASE=(window.FACTION_DB_URL||'').trim().replace(/\/$/,'');
+const LIVE=/^https:\/\//.test(BASE)&&!BASE.includes('YOUR-PROJECT');
+const DEF={types:{t1:{name:'Training',pts:5,o:0},t2:{name:'Patrol',pts:3,o:1},t3:{name:'Raid',pts:10,o:2},t4:{name:'Event',pts:5,o:3},t5:{name:'Defense',pts:8,o:4}},
+ ranks:{r1:{name:'Recruit',min:0,color:'#9ca3af'},r2:{name:'Private',min:10,color:'#60a5fa'},r3:{name:'Corporal',min:25,color:'#34d399'},r4:{name:'Sergeant',min:50,color:'#fbbf24'},r5:{name:'Lieutenant',min:100,color:'#fb923c'},r6:{name:'Captain',min:200,color:'#f87171'}}};
+let crange='w',cmode='all',gmode='all',grange='12',S=null,live=false,authed=false,q='',selType=null,confirmId=null,dirty=false,busy=false,pendR=false,pendW=0,wseq=0,loadT=null,bt=null,lastSig=null;
+try{authed=sessionStorage.getItem('adm')==='1'}catch(e){}
+
+const css=document.createElement('style');
+css.textContent=`:root{--bg:#000;--card:#0b0b0b;--tx:#fff;--mut:#a3a3a3;--ln:#2a2a2a;--acc:#6d8cff;--acct:#000;--good:#4ade80;--bad:#f87171;--chip:#1c1c1c;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 "REM",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:16px}header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:14px}
+h1{font-size:22px;margin:0}h2{font-size:16px;margin:0 0 10px}.nav{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+button,input{font:inherit;color:var(--tx)}a.btn,button{background:var(--card);border:1px solid var(--ln);border-radius:8px;padding:7px 12px;cursor:pointer;text-decoration:none;color:var(--tx)}
+button:hover,a.btn:hover{border-color:var(--acc)}.p,.on{background:var(--acc)!important;color:var(--acct)!important;border-color:var(--acc)!important;font-weight:600}
+.g{color:var(--good);font-weight:700}.b,.d{color:var(--bad)}.b{font-weight:700}
+input{background:var(--bg);border:1px solid var(--ln);border-radius:8px;padding:7px 10px;min-width:0}input[type=number]{width:90px}
+.card{background:var(--card);border:1px solid var(--ln);border-radius:12px;padding:14px;margin-bottom:14px}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}.stat{flex:1;min-width:120px;background:var(--card);border:1px solid var(--ln);border-radius:12px;padding:12px}.stat b{display:block;font-size:22px}
+.mut{color:var(--mut);font-size:13px}.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.scroll{overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{padding:8px;text-align:left;border-top:1px solid var(--ln);vertical-align:middle}
+th{font-size:12px;color:var(--mut);text-transform:uppercase;border-top:0;white-space:nowrap}td.pts{font-weight:700;font-size:17px}
+.rank{background:var(--acc);color:var(--acct);border-radius:999px;padding:2px 10px;font-size:13px;font-weight:600;white-space:nowrap}
+.chip{background:var(--chip);border-radius:999px;padding:2px 9px;font-size:12px;display:inline-block;margin:1px 3px 1px 0;white-space:nowrap}
+.acts{display:flex;gap:5px;flex-wrap:wrap}.award{display:grid;grid-template-columns:repeat(4,max-content);gap:5px}.grip{cursor:grab;color:var(--mut);padding:0 6px;user-select:none;font-size:18px}.dragover{outline:2px dashed var(--acc)}.mini{border:0;background:none;padding:0 5px;font-weight:700;cursor:pointer}.search{width:100%;margin-bottom:8px}.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--ln)}
+.banner{background:var(--chip);border:1px solid var(--acc);border-radius:10px;padding:8px 12px;margin-bottom:14px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--mut);margin-right:5px}.dot.ok{background:var(--good)}
+body[data-mode="public"]{background:transparent}
+body[data-mode="public"]::before{content:"";position:fixed;inset:-25%;z-index:-1;pointer-events:none;background:radial-gradient(38% 34% at 22% 28%,rgba(var(--g1,88,101,242),.55),transparent 70%),radial-gradient(34% 34% at 78% 22%,rgba(var(--g2,168,85,247),.45),transparent 70%),radial-gradient(40% 38% at 72% 78%,rgba(var(--g3,20,184,166),.38),transparent 70%),radial-gradient(30% 30% at 18% 82%,rgba(var(--g4,236,72,153),.32),transparent 70%);animation:drift 26s ease-in-out infinite alternate,hue 50s linear infinite}
+body[data-mode="public"] .card,body[data-mode="public"] .stat{background:var(--cardbg,rgba(8,8,12,.72));-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+@keyframes drift{0%{transform:translate(-3%,2%) rotate(0deg) scale(1)}50%{transform:translate(4%,-3%) rotate(12deg) scale(1.18)}100%{transform:translate(-2%,4%) rotate(-8deg) scale(1.05)}}
+@keyframes hue{to{filter:hue-rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){body[data-mode="public"]::before{animation:none}}
+.scroll{overflow:visible}
+.mrow{border-top:1px solid var(--ln);padding:10px 0;display:flex;flex-direction:column;gap:8px}.mrow:first-child{border-top:0}
+.mtop{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.mname{flex:1 1 140px;min-width:0;font-weight:600;overflow-wrap:anywhere}
+.ptsbox{display:flex;gap:4px;align-items:center;font-size:18px}.ptsbox input{width:84px}
+.macts{display:flex;gap:4px;flex-wrap:wrap}.macts .chip{white-space:normal}
+.award{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;max-width:560px}.award button{white-space:normal;overflow-wrap:anywhere;padding:6px 4px;font-size:13px;line-height:1.2}
+.chip{white-space:normal;overflow-wrap:anywhere;max-width:100%}
+#tip{position:fixed;z-index:20;pointer-events:none;background:#111;color:#fff;border:1px solid #444;border-radius:8px;padding:6px 10px;font-size:13px;display:none;max-width:260px;line-height:1.5}
+.cf{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}.hex{width:92px;font-family:ui-monospace,Consolas,monospace}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--tx);color:var(--bg);padding:9px 14px;border-radius:10px;display:none;z-index:9}`;
+document.head.appendChild(css);
+
+const toast=t=>{const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',3200)};
+const hash=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))].map(b=>b.toString(16).padStart(2,'0')).join('');
+const DEFPW='p1:e363a468f1109cd1eb07c02ad31e87ad:14d48d06bfc8b3da92459ce6569cfb92572e38d1347a2b7cbb21d3bd4136647d';
+async function pbk(pw,sh){const k=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveBits']),salt=Uint8Array.from(sh.match(/../g).map(h=>parseInt(h,16))),bits=await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt,iterations:200000},k,256);return [...new Uint8Array(bits)].map(b=>b.toString(16).padStart(2,'0')).join('')}
+async function makePw(pw){const s=[...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,'0')).join('');return 'p1:'+s+':'+await pbk(pw,s)}
+async function checkPw(pw){const st=S.pwHash||DEFPW;if(st.startsWith('p1:')){const[,s,h]=st.split(':');return (await pbk(pw,s))===h}return (await hash(pw))===st}
+const rankList=()=>arr(S.ranks).sort((a,b)=>a.min-b.min);
+const THEMEDEF={bg:'#000000',g1:'#5865f2',g2:'#a855f7',g3:'#14b8a6',g4:'#ec4899'};
+const hex6=(v,d)=>/^#[0-9a-f]{6}$/i.test(v||'')?v.toLowerCase():d;
+const normHex=v=>{v=(v||'').trim().replace(/^#?/,'#');if(/^#[0-9a-f]{3}$/i.test(v))v='#'+[...v.slice(1)].map(c=>c+c).join('');return /^#[0-9a-f]{6}$/i.test(v)?v.toLowerCase():null};
+function hslHex(h,s,l){s/=100;l/=100;const k=n=>(n+h/30)%12,a=s*Math.min(l,1-l),f=n=>l-a*Math.max(-1,Math.min(k(n)-3,Math.min(9-k(n),1))),x=n=>Math.round(255*f(n)).toString(16).padStart(2,'0');return '#'+x(0)+x(8)+x(4)}
+function lineColors(all){const o=[...all].sort((a,b)=>(a.name||'').localeCompare(b.name||'')),M={};o.forEach((m,i)=>M[m.id]=hex6(m.color,hslHex(Math.round(i*360/o.length),75,60)));return M}
+function cfield(k,id,v){return `<span class="cf"><input type="color" data-c="${k}" data-id="${id}" value="${v}" style="width:48px;padding:2px;height:34px" aria-label="Color picker"><input class="hex" data-c="${k}h" data-id="${id}" value="${v}" maxlength="7" aria-label="Hex code" spellcheck="false"><button type="button" data-a="copy">Copy</button><button type="button" data-a="paste">Paste</button></span>`}
+function applyTheme(){const t=S.theme||{},bg=hex6(t.bg,THEMEDEF.bg),dark=textOn(bg)==='#fff',r=document.documentElement,rgb=h=>{const n=parseInt(h.slice(1),16);return `${n>>16},${(n>>8)&255},${n&255}`},set=(k,v)=>r.style.setProperty(k,v);
+ r.style.background=bg;set('--bg',bg);set('--cardbg',`rgba(${rgb(bg)},.72)`);set('--tx',dark?'#fff':'#111');set('--mut',dark?'#a3a3a3':'#555');set('--ln',dark?'#2a2a2a':'rgba(0,0,0,.18)');set('--chip',dark?'#1c1c1c':'rgba(0,0,0,.07)');set('--card',dark?'#0b0b0b':'#fff');
+ ['g1','g2','g3','g4'].forEach(k=>set('--'+k,rgb(hex6(t[k],THEMEDEF[k]))))}
+const rankObj=p=>rankList().filter(r=>p>=r.min).pop();
+const rankOf=p=>{const r=rankObj(p);return r?r.name:'Unranked'};
+const rcol=r=>/^#[0-9a-f]{6}$/i.test((r&&r.color)||'')?r.color:'#6d8cff';
+const textOn=h=>{const n=parseInt(h.slice(1),16);return (0.299*(n>>16)+0.587*((n>>8)&255)+0.114*(n&255))>150?'#000':'#fff'};
+const badge=r=>{const c=rcol(r);return `<span class="rank" style="background:${c};color:${textOn(c)}">${esc(r?r.name:'Unranked')}</span>`};
+
+// ---------- data layer: live (Firebase REST + SSE) or local demo ----------
+function setLocal(p,v){const ks=p.split('/').filter(Boolean);if(!ks.length){S=JSON.parse(JSON.stringify(v||{}));return}
+ let o=S;for(let i=0;i<ks.length-1;i++)o=o[ks[i]]=o[ks[i]]||{};const k=ks[ks.length-1];
+ if(v&&v['.sv'])o[k]=(Number(o[k])||0)+v['.sv'].increment;else if(v===null)delete o[k];else o[k]=v}
+async function put(p,v){const inc=v&&v['.sv'];for(let i=0;i<(inc?1:3);i++){try{const r=await fetch(`${BASE}/faction${p?'/'+p:''}.json`,{method:'PUT',body:JSON.stringify(v)});if(r.ok)return;if(r.status===401||r.status===403)break}catch(e){}await new Promise(r=>setTimeout(r,500*(i+1)))}throw new Error('save failed')}
+async function W(p,v){setLocal(p,v);render();
+ if(!LIVE){try{localStorage.setItem('fac_local',JSON.stringify(S))}catch(e){}return}
+ wseq++;pendW++;lastSig=null;
+ try{await put(p,v)}catch(e){toast('Could not save that change. Check your connection and Firebase rules.')}
+ finally{pendW--;wseq++;lastSig=null;clearTimeout(loadT);loadT=setTimeout(load,200)}}
+function seed(){if(ADMIN&&(authed||!LIVE)&&!S.init&&!S.ranks&&!S.incs&&!S.types&&!S.members&&!S.log&&!S.theme&&!S.pwHash)W('',{...DEF,init:1})}
+async function load(){if(pendW>0)return;const my=wseq;
+ try{const r=await fetch(`${BASE}/faction.json`);if(!r.ok)throw 0;const d=await r.json();
+  if(my!==wseq||pendW>0){clearTimeout(loadT);loadT=setTimeout(load,250);return}
+  const ns=(d&&typeof d==='object')?d:{},sig=JSON.stringify(ns);live=true;dot();if(S!==null&&sig===lastSig)return;lastSig=sig;S=ns;seed();refresh()}
+ catch(e){live=false;dot();if(S===null){clearTimeout(loadT);loadT=setTimeout(load,3000)}}}
+function connect(){let t;const sched=()=>{clearTimeout(t);t=setTimeout(load,120)};
+ try{const es=new EventSource(`${BASE}/faction.json`);es.addEventListener('put',sched);es.addEventListener('patch',sched);
+  es.onopen=()=>{live=true;dot()};es.onerror=()=>{live=false;dot()}}catch(e){}
+ setInterval(load,30000);load()}
+function dot(){const e=$('#live');if(e){e.className='dot'+(live?' ok':'');e.nextSibling.textContent=live?'Live':'Reconnecting…'}}
+function refresh(){render()}
+
+// ---------- views ----------
+function hdr(){return `<header><h1>🪖 Faction Activity Tracker</h1><div class="nav">
+ ${LIVE?`<span class="mut"><span id="live" class="dot${live?' ok':''}"></span><span>${live?'Live':'Connecting…'}</span></span>`:''}
+ <a class="btn ${ADMIN?'':'on'}" href="index.html">Dashboard</a><a class="btn ${ADMIN?'on':''}" href="admin.html">Admin</a>
+ ${ADMIN&&authed?'<button data-a="logout">Log out</button>':''}</div></header>
+ ${LIVE?'':'<div class="banner">Demo mode: data is saved only in this browser. Add your Firebase URL in <b>config.js</b> to turn on live tracking.</div>'}`}
+function cfg(){return `
+<div class="card"><h2>Events (each has its own point value; drag ⠿ or use ▲▼ to reorder; 4 buttons per row)</h2>
+${evList().map(t=>`<div class="row" data-drop="${t.id}"><span class="grip" draggable="true" data-drag="${t.id}" title="Drag to reorder">⠿</span><button data-a="evup" data-id="${t.id}" aria-label="Move up">▲</button><button data-a="evdn" data-id="${t.id}" aria-label="Move down">▼</button><input data-c="evn" data-id="${t.id}" value="${esc(t.name)}" aria-label="Event name"><input type="number" data-c="evp" data-id="${t.id}" value="${t.pts||0}" aria-label="Points"><span class="mut">points</span><button class="d" data-a="deltype" data-id="${t.id}">Delete</button></div>`).join('')}
+<div class="bar" style="margin-top:10px"><input id="nt" placeholder="Event name"><input type="number" id="np" placeholder="Points"><button class="p" data-a="addtype">Add event</button></div></div>
+<div class="card"><h2>Ranks &amp; point thresholds</h2>
+${rankList().map(r=>`<div class="row">${cfield('rankc',r.id,rcol(r))}<input data-c="rankn" data-id="${r.id}" value="${esc(r.name)}" aria-label="Rank name"><input type="number" data-c="rankm" data-id="${r.id}" value="${r.min}" aria-label="Points needed"><span class="mut">points needed</span><button class="d" data-a="delrank" data-id="${r.id}">Delete</button></div>`).join('')}
+<div class="bar" style="margin-top:10px"><input id="rn" placeholder="Rank name"><input type="number" id="rm" placeholder="Points"><span id="rcw">${cfield('rcnew','new','#6d8cff')}</span><button class="p" data-a="addrank">Add rank</button></div></div>
+<div class="card"><h2>Graph line colors</h2><div class="mut" style="margin-bottom:8px">Color of each username's line on the main page graph. Paste a hex code or pick one. "Auto" restores the default.</div>
+${(()=>{const ms=arr(S.members).sort((a,b)=>(a.name||'').localeCompare(b.name||'')),C=lineColors(ms);return ms.map(m=>`<div class="row"><b style="flex:0 1 140px;min-width:0;overflow-wrap:anywhere">${esc(m.name)}</b>${cfield('linec',m.id,C[m.id])}<button data-a="lineauto" data-id="${m.id}">Auto</button></div>`).join('')||'<span class="mut">Add members first.</span>'})()}</div>
+<div class="card"><h2>Main page colors</h2><div class="mut" style="margin-bottom:8px">Shown on the public dashboard only. The background is the base color; the four glows are the animated gradient colors.</div>
+${(()=>{const t=S.theme||{},g=k=>{const n=parseInt(hex6(t[k],THEMEDEF[k]).slice(1),16);return `${n>>16},${(n>>8)&255},${n&255}`};return `<div style="height:70px;border-radius:10px;margin-bottom:10px;border:1px solid var(--ln);background:radial-gradient(40% 90% at 15% 20%,rgba(${g('g1')},.7),transparent 70%),radial-gradient(40% 90% at 85% 20%,rgba(${g('g2')},.6),transparent 70%),radial-gradient(40% 90% at 70% 90%,rgba(${g('g3')},.55),transparent 70%),radial-gradient(40% 90% at 20% 95%,rgba(${g('g4')},.5),transparent 70%),${hex6(t.bg,THEMEDEF.bg)}" aria-label="Preview"></div>`})()}
+${[['bg','Background'],['g1','Glow 1'],['g2','Glow 2'],['g3','Glow 3'],['g4','Glow 4']].map(([k,t])=>`<div class="row"><b style="width:110px">${t}</b>${cfield('theme',k,hex6((S.theme||{})[k],THEMEDEF[k]))}</div>`).join('')}
+<div class="bar" style="margin-top:10px"><button data-a="themereset">Reset to default</button></div></div>
+<div class="card"><h2>Change password</h2><div class="bar"><input type="password" id="p0" placeholder="Current password"><input type="password" id="p1" placeholder="New password"><input type="password" id="p2" placeholder="Confirm new"><button class="p" data-a="pw">Change</button></div></div>`}
+const ukey=el=>el.id||(el.dataset&&el.dataset.c?el.dataset.c+'|'+(el.dataset.id||''):'');
+function snapUI(){const a=document.activeElement,o={vals:{},focus:null,sel:null,y:window.scrollY};
+ document.querySelectorAll('#app input').forEach(el=>{const k=ukey(el);if(k&&el.type!=='color'&&el.value!==el.defaultValue)o.vals[k]=el.value});
+ if(a&&a.matches&&a.matches('#app input')){o.focus=ukey(a);try{o.sel=[a.selectionStart,a.selectionEnd]}catch(e){}}return o}
+function restoreUI(o){const els=[...document.querySelectorAll('#app input')],f=k=>els.find(e=>ukey(e)===k);
+ for(const k in o.vals){const e=f(k);if(e){e.value=o.vals[k];e._r=1}}
+ if(o.focus){const e=f(o.focus);if(e){e.focus({preventScroll:true});try{if(o.sel)e.setSelectionRange(o.sel[0],o.sel[1])}catch(x){}}}
+ window.scrollTo(0,o.y)}
+const colorOpen=()=>{const a=document.activeElement;return !!(a&&a.type==='color'&&a.closest&&a.closest('#app'))};
+function render(){if(busy||colorOpen()){pendR=true;return}const o=snapUI();draw();restoreUI(o)}
+function renderList(){const o=snapUI();drawList();restoreUI(o)}
+const relBusy=()=>{clearTimeout(bt);if(!busy)return;busy=false;if(pendR){pendR=false;setTimeout(render,60)}};
+document.addEventListener('pointerdown',()=>{busy=true;clearTimeout(bt);bt=setTimeout(relBusy,4000)},true);
+document.addEventListener('pointerup',relBusy,true);document.addEventListener('pointercancel',relBusy,true);
+document.addEventListener('focusout',e=>{if(pendR&&!busy){pendR=false;setTimeout(render,60)}const t=e.target;if(t&&t._r&&t.dataset&&t.dataset.c&&t.value!==t.defaultValue&&t._v!==t.value){t._r=0;t.dispatchEvent(new Event('change',{bubbles:true}))}});
+function draw(){const app=$('#app');if(S&&!ADMIN)applyTheme();
+ if(S===null){app.innerHTML=hdr()+'<p class="mut">Connecting…</p>';return}
+ if(ADMIN&&!authed){app.innerHTML=hdr()+'<div class="card" style="max-width:380px"><h2>Admin login</h2><div class="bar"><input type="password" id="pw" placeholder="Password"><button class="p" data-a="login">Enter</button></div></div>';return}
+ const types=arr(S.types);if(!types.find(t=>t.id===selType))selType=types[0]?types[0].id:null;
+ let h=hdr()+'<div class="stats" id="stats"></div>'+(ADMIN?'':'<div class="card"><h2>🏆 Top 5</h2><div id="top5"></div></div><div class="card"><h2>🏅 Top 10</h2><div id="top10"></div></div><div class="card"><h2>Points by day (live)</h2><div id="chart"></div></div><div class="card"><h2>Monthly point gains (live)</h2><div id="gchart"></div></div>')+`<div class="card"><h2>${ADMIN?'Members &amp; points':'All members'}</h2>`;
+ if(ADMIN)h+=`<div class="bar" style="margin-bottom:10px"><input id="nm" placeholder="Add username(s), comma separated" style="flex:1;min-width:200px"><button class="p" data-a="addm">Add member</button></div>`;
+ h+=`<input class="search" id="q" placeholder="Search usernames…" value="${esc(q)}"><div class="scroll" id="list"></div></div>`;
+ if(!ADMIN)h+=`<div class="card"><h2>Rank requirements</h2>${rankList().map(r=>`<span class="chip" style="background:${rcol(r)};color:${textOn(rcol(r))}">${esc(r.name)} · ${r.min}+ pts</span>`).join('')||'<span class="mut">No ranks set yet.</span>'}</div>`;
+ if(ADMIN)h+=cfg();
+ const y=window.scrollY;app.innerHTML=h;drawList();window.scrollTo(0,y)}
+function drawList(){const ms=arr(S.members),types=S.types||{},evs=ADMIN?evList():[];
+ $('#stats').innerHTML=`<div class="stat"><b>${ms.length}</b><span class="mut">Members</span></div><div class="stat"><b>${ms.reduce((s,m)=>s+(m.points||0),0)}</b><span class="mut">Total points</span></div><div class="stat"><b>${rankList().length}</b><span class="mut">Ranks</span></div>`;
+ const byPts=(a,b)=>(b.points||0)-(a.points||0)||(a.name||'').localeCompare(b.name||''),byName=(a,b)=>(a.name||'').toLowerCase().localeCompare((b.name||'').toLowerCase())||a.id.localeCompare(b.id);
+ const list=ms.filter(m=>(m.name||'').toLowerCase().includes(q.toLowerCase())).sort(ADMIN?byName:byPts);
+ const order=[...ms].sort(byPts),pos={};order.forEach((m,i)=>pos[m.id]=i);
+ const chips=m=>Object.entries(m.acts||{}).filter(([t,c])=>types[t]&&c>0).map(([t,c])=>`<span class="chip">${esc(types[t].name)} ×${c}${ADMIN?` <button class="mini" data-a="actdec" data-id="${m.id}" data-t="${t}" title="Decrease by 1">−</button><button class="mini d" data-a="actdel" data-id="${m.id}" data-t="${t}" title="Remove this activity">✕</button>`:''}</span>`).join('')||'<span class="mut">No activities yet</span>';
+ const rows=list.map((m,i)=>{const p=m.points||0;
+  return `<div class="mrow"><div class="mtop"><span style="min-width:28px;font-size:18px">${ADMIN?`<span class="mut" style="font-size:13px">${i+1}</span>`:medal(pos[m.id],p)}</span>${ADMIN?`<input class="mname" data-c="mname" data-id="${m.id}" value="${esc(m.name)}" aria-label="Username">`:`<b class="mname">${esc(m.name)}</b>`}
+  <span class="ptsbox">${ADMIN?`<input type="number" data-c="mpts" data-id="${m.id}" value="${p}" aria-label="Points">`:`<b>${p}</b>`}<span class="mut">pts</span></span>${badge(rankObj(p))}${ADMIN?`<button class="d" data-a="rm" data-id="${m.id}">${confirmId===m.id?'Sure?':'Remove'}</button>`:''}</div>
+  <div class="macts">${chips(m)}</div>
+  ${ADMIN?`<div class="award">${evs.map(t=>`<button class="${(t.pts||0)<0?'b':'g'}" data-a="award" data-id="${m.id}" data-n="${t.id}">${esc(t.name)} ${(t.pts||0)>0?'+':''}${t.pts||0}</button>`).join('')}</div>`:''}</div>`}).join('');
+ if(!ADMIN)drawExtras(ms);
+ $('#list').innerHTML=rows||`<p class="mut">${ms.length?'No matches.':'No members yet.'+(ADMIN?' Add usernames above.':'')}</p>`}
+
+const medal=(i,p)=>p>0&&i<3?['🥇','🥈','🥉'][i]:i+1;
+function topHTML(l){return l.length?l.map((m,i)=>{const p=m.points||0;return `<div class="row"><b style="width:34px;font-size:18px">${medal(i,p)}</b><b style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(m.name)}</b>${badge(rankObj(p))}<b>${p}</b></div>`}).join(''):'<span class="mut">No members yet.</span>'}
+function drawExtras(ms){
+ const s=[...ms].sort((a,b)=>(b.points||0)-(a.points||0)||(a.name||'').localeCompare(b.name||'')),t5=s.slice(0,5),t10=s.slice(0,10);
+ $('#top5').innerHTML=topHTML(t5);$('#top10').innerHTML=topHTML(t10);$('#chart').innerHTML=chart(ms,t5,t10);$('#gchart').innerHTML=gains(ms,t5,t10)}
+let CHM=null,CHG=null;
+const tip=document.createElement('div');tip.id='tip';document.body.appendChild(tip);
+function hl(id){document.querySelectorAll('#chart [data-m],#gchart [data-m]').forEach(el=>{if(el.tagName==='SPAN')return;const on=!id||el.dataset.m===id;el.style.opacity=on?1:.15;if(el.tagName==='polyline')el.setAttribute('stroke-width',id&&on?4:2)})}
+function hideTip(){if(tip.style.display==='block'){tip.style.display='none';hl(null)}}
+function showTip(html,e){tip.innerHTML=html;tip.style.display='block';const w=tip.offsetWidth,h=tip.offsetHeight;let X=e.clientX+14,Y=e.clientY+14;if(X+w>innerWidth-6)X=e.clientX-w-14;if(Y+h>innerHeight-6)Y=e.clientY-h-14;tip.style.left=Math.max(6,X)+'px';tip.style.top=Math.max(6,Y)+'px'}
+const dayFmt=t=>new Date(t).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+function segDist(px,py,x1,y1,x2,y2){const dx=x2-x1,dy=y2-y1,l=dx*dx+dy*dy;let t=l?((px-x1)*dx+(py-y1)*dy)/l:0;t=Math.max(0,Math.min(1,t));return Math.hypot(px-(x1+t*dx),py-(y1+t*dy))}
+function chartHover(e){const svg=e.target.closest&&e.target.closest('#chart svg,#gchart svg'),CH=svg&&(svg.closest('#gchart')?CHG:CHM);if(!svg||!CH){if(!(e.target.closest&&e.target.closest('.chip[data-m]')))hideTip();return}
+ const r=svg.getBoundingClientRect(),k=CH.VW/r.width,sx=(e.clientX-r.left)*k,sy=(e.clientY-r.top)*k,{series,days,N,L,R,x,y}=CH,step=(CH.VW-L-R)/(N-1),c=Math.max(0,Math.min(N-1,Math.round((sx-L)/step)));
+ const dots=[],lines=[];
+ series.forEach(s=>{let nd=null;for(let i=Math.max(0,c-1);i<=Math.min(N-1,c+1);i++){const d=Math.hypot(sx-x(i),sy-y(s.v[i]));if(d<=14*k&&(!nd||d<nd.d))nd={s,i,d}}
+  if(nd)dots.push(nd);
+  const i0=Math.max(0,Math.min(N-2,Math.floor((sx-L)/step)));let best=1e9;
+  for(let i=Math.max(0,i0-1);i<=Math.min(N-2,i0+1);i++)best=Math.min(best,segDist(sx,sy,x(i),y(s.v[i]),x(i+1),y(s.v[i+1])));
+  if(best<=9*k)lines.push({s,i:c,d:best})});
+ // dots/days take priority over plain line hits
+ let pick=dots.length?dots.sort((a,b)=>a.d-b.d):lines.sort((a,b)=>a.d-b.d);
+ if(!pick.length){hideTip();return}
+ const di=pick[0].i;if(dots.length)pick=pick.filter(p=>p.i===di);
+ const rows=pick.slice(0,6).map(p=>`<div><span class="dot" style="background:${p.s.col}"></span><b>${esc(p.s.m.name)}</b> · ${CH.fmt?CH.fmt(p.s.v[di]):p.s.v[di]+' pts'}</div>`).join('')+(pick.length>6?`<div>+${pick.length-6} more</div>`:'');
+ hl(pick[0].s.m.id);showTip(`<div style="color:#aaa;font-size:12px">${CH.lab?CH.lab(di):dayFmt(days[di])}</div>${rows}`,e)}
+document.addEventListener('pointermove',chartHover);document.addEventListener('pointerdown',chartHover);
+document.addEventListener('mouseover',e=>{const c=e.target.closest&&e.target.closest('#chart .chip[data-m],#gchart .chip[data-m]'),CH=c&&(c.closest('#gchart')?CHG:CHM);if(!c||!CH)return;const s=CH.series.find(s=>s.m.id===c.dataset.m);if(!s)return;hl(s.m.id);showTip(`<div><span class="dot" style="background:${s.col}"></span><b>${esc(s.m.name)}</b> · ${c.closest('#gchart')?(()=>{const t=s.v.reduce((a,b)=>a+b,0);return (t>0?'+':'')+t+' gained'})():(s.m.points||0)+' pts now'}</div>`,e)});
+document.addEventListener('mouseout',e=>{if(e.target.closest&&e.target.closest('#chart .chip[data-m],#gchart .chip[data-m]'))hideTip()});
+const RANGES={w:{d:7,t:'Week'},m:{d:30,t:'Month'},y:{d:365,t:'Year'},y3:{d:1095,t:'3 Years'},y5:{d:1825,t:'5 Years'}};
+function chart(ms,top,top10){
+ if(!ms.length)return '<span class="mut">Members will appear here once they are added.</span>';
+ const N=RANGES[crange].d,logs=arr(S.log),dk=t=>{const d=new Date(t);d.setHours(0,0,0,0);return d.getTime()},today=dk(Date.now());
+ // rolling window: always the last N days ending today, so each new day pushes the oldest day out
+ const days=[];for(let i=N-1;i>=0;i--){const d=new Date(today);d.setDate(d.getDate()-i);days.push(d.getTime())}
+ const delta={};logs.forEach(l=>{const d=delta[l.m]=delta[l.m]||{},k=dk(l.t);d[k]=(d[k]||0)+(l.p||0)});
+ const shown=(cmode==='top5'?[...top]:cmode==='top10'?[...top10]:[...ms]).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+ const colors=lineColors(ms);const series=shown.map((m,i)=>{const dm=delta[m.id]||{},v=new Array(N);let cur=m.points||0;
+  for(let j=N-1;j>=0;j--){v[j]=cur;cur-=(dm[days[j]]||0)}
+  return{m,v,col:colors[m.id]}});
+ const all=series.flatMap(s=>s.v),max=Math.max(1,...all),min=Math.min(0,...all),VW=700,VH=270,L=40,R=26,T=10,B=34;
+ const x=i=>L+i*(VW-L-R)/(N-1),y=v=>T+(max-v)*(VH-T-B)/(max-min);
+ const lab=i=>{const d=new Date(days[i]);
+  if(N===7)return d.toLocaleDateString(undefined,{weekday:'short',month:'numeric',day:'numeric'});
+  if(N===30)return (N-1-i)%5===0?d.toLocaleDateString(undefined,{month:'numeric',day:'numeric'}):'';
+  const step=N===365?1:N===1095?3:6;
+  return d.getDate()===1&&d.getMonth()%step===0?d.toLocaleDateString(undefined,{month:'short',year:'2-digit'}):''};
+ let g='';for(let k=0;k<=4;k++){const val=min+(max-min)*k/4;g+=`<line x1="${L}" x2="${VW-R}" y1="${y(val)}" y2="${y(val)}" style="stroke:var(--ln)"/><text x="${L-6}" y="${y(val)+4}" font-size="11" text-anchor="end" fill="currentColor">${Math.round(val)}</text>`}
+ // one tick per day along the bottom; labeled days get a longer tick
+ const base=VH-B;let ticks='',labels='';
+ for(let i=0;i<N;i++){const t=lab(i);ticks+=`M${x(i)} ${base}v${t?7:3}`;
+  if(t)labels+=`<text x="${x(i)}" y="${VH-8}" font-size="11" text-anchor="${i===0?'start':i===N-1?'end':'middle'}" fill="currentColor">${t}</text>`}
+ g+=`<path d="${ticks}" style="stroke:var(--mut)" fill="none"/>${labels}`;
+ const lines=series.map(s=>`<polyline data-m="${s.m.id}" fill="none" stroke="${s.col}" stroke-width="2" stroke-linejoin="round" points="${s.v.map((p,i)=>x(i).toFixed(1)+','+y(p).toFixed(1)).join(' ')}"/>`+(N<=30?s.v.map((p,i)=>`<circle data-m="${s.m.id}" cx="${x(i)}" cy="${y(p)}" r="2.5" fill="${s.col}"/>`).join(''):`<circle data-m="${s.m.id}" cx="${x(N-1)}" cy="${y(s.v[N-1])}" r="3.5" fill="${s.col}"/>`)).join('');
+ CHM={series,days,N,L,R,VW,VH,x,y};const btn=(a,k,t,cur)=>`<button class="${cur===k?'on':''}" data-a="${a}" data-id="${k}">${t}</button>`;
+ return `<div class="bar" style="margin-bottom:8px">${Object.entries(RANGES).map(([k,r])=>btn('crange',k,r.t,crange)).join('')}<span style="width:10px"></span>${btn('cmode','all','Everyone',cmode)}${btn('cmode','top5','Top 5 only',cmode)}${btn('cmode','top10','Top 10 only',cmode)}</div>
+ <div class="mut" style="margin-bottom:6px">Total points per username, last ${N===7?'7 days':N===30?'30 days':N===365?'year':N===1095?'3 years':'5 years'} (rolling, ends today)</div>
+ <svg viewBox="0 0 ${VW} ${VH}" style="width:100%;height:auto;color:var(--mut)" role="img" aria-label="Points by day">${g}${lines}</svg>
+ <div style="margin-top:8px">${series.map(s=>`<span class="chip" data-m="${s.m.id}"><span class="dot" style="background:${s.col}"></span>${esc(s.m.name)} · ${s.m.points||0}</span>`).join('')}</div>`}
+
+const evList=()=>arr(S.types).sort((a,b)=>(a.o==null?1e9:a.o)-(b.o==null?1e9:b.o)||(a.name||'').localeCompare(b.name||'')||a.id.localeCompare(b.id));
+function saveEvOrder(l){const o={};l.forEach((t,i)=>o[t.id]={name:t.name,pts:t.pts||0,o:i});W('types',o)}
+function moveEv(id,dir){const l=evList(),i=l.findIndex(t=>t.id===id),j=i+dir;if(i<0||j<0||j>=l.length)return;[l[i],l[j]]=[l[j],l[i]];saveEvOrder(l)}
+function reorderEv(from,to){const l=evList(),i=l.findIndex(t=>t.id===from),j=l.findIndex(t=>t.id===to);if(i<0||j<0||i===j)return;const[x]=l.splice(i,1);l.splice(j,0,x);saveEvOrder(l)}
+let dragId=null;
+document.addEventListener('dragstart',e=>{const g=e.target.closest&&e.target.closest('[data-drag]');if(g){dragId=g.dataset.drag;e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',dragId)}});
+document.addEventListener('dragover',e=>{if(dragId&&e.target.closest('[data-drop]'))e.preventDefault()});
+document.addEventListener('drop',e=>{const r=e.target.closest('[data-drop]');if(!dragId||!r)return;e.preventDefault();const f=dragId;dragId=null;reorderEv(f,r.dataset.drop)});
+document.addEventListener('dragend',()=>{dragId=null});
+
+const GR={6:'6 Months',12:'12 Months',36:'3 Years',60:'5 Years'};
+function gains(ms,t5,t10){
+ if(!ms.length)return '<span class="mut">Members will appear here once they are added.</span>';
+ const N=+grange,now=new Date(),cur=now.getFullYear()*12+now.getMonth(),keys=[];for(let i=N-1;i>=0;i--)keys.push(cur-i);
+ const per={};arr(S.log).forEach(l=>{const d=new Date(l.t),k=d.getFullYear()*12+d.getMonth(),o=per[l.m]=per[l.m]||{};o[k]=(o[k]||0)+(l.p||0)});
+ const shown=(gmode==='top5'?[...t5]:gmode==='top10'?[...t10]:[...ms]).sort((a,b)=>(a.name||'').localeCompare(b.name||'')),colors=lineColors(ms);
+ const series=shown.map(m=>({m,v:keys.map(k=>(per[m.id]||{})[k]||0),col:colors[m.id]}));
+ const all=series.flatMap(s=>s.v),max=Math.max(1,...all),min=Math.min(0,...all),VW=700,VH=270,L=40,R=26,T=10,B=34;
+ const x=i=>L+i*(VW-L-R)/(N-1),y=v=>T+(max-v)*(VH-T-B)/(max-min),mon=k=>new Date(Math.floor(k/12),k%12,1);
+ const lab=i=>mon(keys[i]).toLocaleDateString(undefined,{month:'long',year:'numeric'});
+ const tl=i=>{if((N-1-i)%(N<=12?1:N<=36?3:6))return '';return mon(keys[i]).toLocaleDateString(undefined,N<=12?{month:'short'}:{month:'short',year:'2-digit'})};
+ let g='';for(let k=0;k<=4;k++){const val=min+(max-min)*k/4;g+=`<line x1="${L}" x2="${VW-R}" y1="${y(val)}" y2="${y(val)}" style="stroke:var(--ln)"/><text x="${L-6}" y="${y(val)+4}" font-size="11" text-anchor="end" fill="currentColor">${Math.round(val)}</text>`}
+ let ticks='',labels='';for(let i=0;i<N;i++){const t=tl(i);ticks+=`M${x(i)} ${VH-B}v${t?7:3}`;if(t)labels+=`<text x="${x(i)}" y="${VH-8}" font-size="11" text-anchor="${i===0?'start':i===N-1?'end':'middle'}" fill="currentColor">${t}</text>`}
+ g+=`<path d="${ticks}" style="stroke:var(--mut)" fill="none"/>${labels}`;
+ const lines=series.map(s=>`<polyline data-m="${s.m.id}" fill="none" stroke="${s.col}" stroke-width="2" stroke-linejoin="round" points="${s.v.map((p,i)=>x(i).toFixed(1)+','+y(p).toFixed(1)).join(' ')}"/>`+s.v.map((p,i)=>`<circle data-m="${s.m.id}" cx="${x(i)}" cy="${y(p)}" r="2.5" fill="${s.col}"/>`).join('')).join('');
+ CHG={series,days:keys,N,L,R,VW,VH,x,y,lab,fmt:v=>(v>0?'+':'')+v+' pts gained'};
+ const bt=(a,k,t,c)=>`<button class="${c===k?'on':''}" data-a="${a}" data-id="${k}">${t}</button>`;
+ return `<div class="bar" style="margin-bottom:8px">${Object.entries(GR).map(([k,t])=>bt('grange',k,t,grange)).join('')}<span style="width:10px"></span>${bt('gmode','all','Everyone',gmode)}${bt('gmode','top5','Top 5 only',gmode)}${bt('gmode','top10','Top 10 only',gmode)}</div>
+ <div class="mut" style="margin-bottom:6px">Points earned in each calendar month (not running totals). Tracking starts from the day this feature went live.</div>
+ <svg viewBox="0 0 ${VW} ${VH}" style="width:100%;height:auto;color:var(--mut)" role="img" aria-label="Monthly point gains">${g}${lines}</svg>
+ <div style="margin-top:8px">${series.map(s=>{const t=s.v.reduce((a,b)=>a+b,0);return `<span class="chip" data-m="${s.m.id}"><span class="dot" style="background:${s.col}"></span>${esc(s.m.name)} · ${t>0?'+':''}${t}</span>`}).join('')}</div>`}
+
+// ---------- actions ----------
+document.addEventListener('click',async e=>{const b=e.target.closest('[data-a]');if(!b)return;
+ const a=b.dataset.a,id=b.dataset.id,v=s=>(($(s)||{}).value||''),m=(S.members||{})[id];
+ if(a==='cmode'||a==='crange'||a==='gmode'||a==='grange'){if(a==='cmode')cmode=id;else if(a==='crange')crange=id;else if(a==='gmode')gmode=id;else grange=id;renderList();return}
+ if(a==='login'){const pw=v('#pw');if(await checkPw(pw)){authed=true;try{sessionStorage.setItem('adm','1')}catch(x){}seed();render()}else toast('Wrong password');return}
+ if(!ADMIN||!authed)return;
+ if(a==='logout'){authed=false;try{sessionStorage.removeItem('adm')}catch(x){}render()}
+ else if(a==='award'&&m){const tid=b.dataset.n,ev=(S.types||{})[tid];if(!ev)return;const pt=Number(ev.pts)||0;W(`members/${id}/points`,{'.sv':{increment:pt}});W(`members/${id}/acts/${tid}`,{'.sv':{increment:1}});W('log/'+uid(),{m:id,p:pt,t:Date.now()});toast(`${ev.name} ${pt>=0?'+':''}${pt} → ${m.name}`)}
+ else if(a==='rm'&&m){if(confirmId===id){confirmId=null;W('members/'+id,null)}else{confirmId=id;renderList();setTimeout(()=>{if(confirmId===id){confirmId=null;renderList()}},3000)}}
+ else if(a==='addm'){const have=arr(S.members).map(x=>(x.name||'').toLowerCase()),fresh=[];
+  v('#nm').split(/[\n,]+/).map(s=>s.trim()).filter(Boolean).forEach(nm=>{if(!have.includes(nm.toLowerCase())){have.push(nm.toLowerCase());fresh.push(nm)}});
+  if(fresh.length){$('#nm').value='';fresh.forEach(nm=>W('members/'+uid(),{name:nm,points:0}));toast(fresh.length+' added')}else toast('Nothing new to add (empty, or already in the list)')}
+ else if(a==='evup'||a==='evdn')moveEv(id,a==='evup'?-1:1);
+ else if(a==='copy'){const h=b.parentElement.querySelector('.hex');try{await navigator.clipboard.writeText(h.value);toast('Copied '+h.value)}catch(x){h.focus();h.select();try{document.execCommand('copy');toast('Copied '+h.value)}catch(y){toast('Press Ctrl+C to copy')}}}
+ else if(a==='paste'){const h=b.parentElement.querySelector('.hex');try{h.value=(await navigator.clipboard.readText()).trim();h.dispatchEvent(new Event('change',{bubbles:true}))}catch(x){h.focus();h.select();toast('Press Ctrl+V (or long-press, Paste) in the hex box')}}
+ else if(a==='lineauto')W(`members/${id}/color`,null);
+ else if(a==='themereset')W('theme',null);
+ else if(a==='actdec'&&m){const t=b.dataset.t,c=(m.acts||{})[t]||0;if(c>1)W(`members/${id}/acts/${t}`,{'.sv':{increment:-1}});else W(`members/${id}/acts/${t}`,null)}
+ else if(a==='actdel'&&m)W(`members/${id}/acts/${b.dataset.t}`,null);
+ else if(a==='addtype'){const t=v('#nt').trim(),p=parseInt(v('#np'));if(t&&!isNaN(p)){$('#nt').value='';$('#np').value='';const o={};evList().forEach((x,i)=>o[x.id]={name:x.name,pts:x.pts||0,o:i});o[uid()]={name:t,pts:p,o:Object.keys(o).length};W('types',o)}else toast('Enter an event name and its points')}
+ else if(a==='deltype')W('types/'+id,null);
+ else if(a==='addrank'){const n=v('#rn').trim(),p=parseInt(v('#rm'));if(n&&!isNaN(p)){const c=hex6(v('#rcw .hex'),'#6d8cff');$('#rn').value='';$('#rm').value='';W('ranks/'+uid(),{name:n,min:p,color:c})}else toast('Enter a rank name and points')}
+ else if(a==='delrank')W('ranks/'+id,null);
+ else if(a==='pw'){if(!(await checkPw(v('#p0'))))return toast('Current password is wrong');
+  if(v('#p1').length<4)return toast('New password must be at least 4 characters');if(v('#p1')!==v('#p2'))return toast('New passwords do not match');
+  const np=v('#p1');['#p0','#p1','#p2'].forEach(s=>{$(s).value=''});W('pwHash',await makePw(np));toast('Password changed')}
+});
+document.addEventListener('change',e=>{const t=e.target,c=t.dataset.c;t._v=t.value;if(!c||!ADMIN||!authed)return;const id=t.dataset.id,num=parseInt(t.value);
+ const CP={rankc:i=>`ranks/${i}/color`,linec:i=>`members/${i}/color`,theme:i=>`theme/${i}`};
+ if(c==='rcnew'){t.parentElement.querySelector('.hex').value=t.value;return}
+ if(c==='rcnewh'){const h=normHex(t.value);if(h)t.parentElement.querySelector('input[type=color]').value=h;else toast('Not a valid hex color');return}
+ if(c in CP){t.blur();W(CP[c](id),t.value);toast('Color saved');return}
+ if(c.endsWith('h')&&c.slice(0,-1) in CP){const h=normHex(t.value);if(h){W(CP[c.slice(0,-1)](id),h);toast('Color saved')}else{toast('Not a valid hex color, e.g. #1a2b3c');render()}return}
+ if(c==='mname'){const n=t.value.trim();if(n)W(`members/${id}/name`,n)}
+ else if(c==='mpts'){if(!isNaN(num))W(`members/${id}/points`,num)}
+ else if(c==='evn'){const n=t.value.trim();if(n)W(`types/${id}/name`,n)}
+ else if(c==='evp'){if(!isNaN(num))W(`types/${id}/pts`,num)}
+ else if(c==='rankn'){const n=t.value.trim();if(n)W(`ranks/${id}/name`,n)}
+ else if(c==='rankm'){if(!isNaN(num))W(`ranks/${id}/min`,num)}
+ else if(c==='rankc')W(`ranks/${id}/color`,t.value);
+});
+document.addEventListener('input',e=>{if(e.target.id==='q'){q=e.target.value;renderList()}
+ const t=e.target;if(ADMIN&&authed&&t.classList&&t.classList.contains('hex')&&/^#?[0-9a-f]{6}$/i.test(t.value.trim())){clearTimeout(t._t);t._t=setTimeout(()=>t.dispatchEvent(new Event('change',{bubbles:true})),350)}});
+document.addEventListener('keydown',e=>{if(e.key!=='Enter')return;if(e.target.classList&&e.target.classList.contains('hex')){e.target.dispatchEvent(new Event('change',{bubbles:true}));return}const t=e.target.id;
+ if(t==='pw'||t==='nm'){const b=document.querySelector(t==='pw'?'[data-a=login]':'[data-a=addm]');b&&b.click()}});
+
+// ---------- start ----------
+if(LIVE){render();connect()}
+else{try{S=JSON.parse(localStorage.getItem('fac_local')||'null')}catch(e){}S=S||JSON.parse(JSON.stringify(DEF));render();
+ window.addEventListener('storage',()=>{try{S=JSON.parse(localStorage.getItem('fac_local'))||S;refresh()}catch(e){}})}
+})();
+
+</script></body></html>
